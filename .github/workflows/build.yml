@@ -1,0 +1,46 @@
+name: Build adblock resources
+
+on:
+  schedule:
+    - cron: "17 3 * * *"   # every day at 03:17 UTC
+  workflow_dispatch:        # "Run workflow" button for manual runs
+
+permissions:
+  contents: write           # lets the job commit dist/
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Find latest uBlock Origin release
+        id: ubo
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG=$(gh api repos/gorhill/uBlock/releases/latest --jq .tag_name)
+          echo "Latest uBO release: $TAG"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Download uBlock Origin source
+        run: git clone --quiet --depth 1 --branch "${{ steps.ubo.outputs.tag }}" https://github.com/gorhill/uBlock.git ubo
+
+      - name: Build resources.json
+        run: node build-resources.mjs ubo dist "${{ steps.ubo.outputs.tag }}"
+
+      - name: Publish if changed
+        run: |
+          if [ -f dist/resources.json ] && git diff --quiet -- dist/resources.json && git ls-files --error-unmatch dist/resources.json >/dev/null 2>&1; then
+            echo "No change since last run — nothing to publish."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add dist/resources.json dist/version.json
+          git commit -m "Update resources to uBlock Origin ${{ steps.ubo.outputs.tag }}"
+          git push
